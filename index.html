@@ -120,7 +120,8 @@
   <div class="hint">
     <b>&larr;/&rarr;</b> движение &nbsp; <b>&uarr;</b> прыжок &nbsp; <b>&darr;</b> блок/присед &nbsp;
     <b>Z</b> удар рукой &nbsp; <b>X</b> удар ногой &nbsp; <b>C</b> спецприём &nbsp;
-    <b>Enter</b> старт/рестарт &nbsp; <b>P</b> пауза &nbsp; <b>M</b> звук
+    <b>V</b> суперприём (когда шкала полна) &nbsp;
+    <b>Enter</b> старт/рестарт &nbsp; <b>P</b> пауза &nbsp; <b>M</b> звук/музыка
   </div>
 
 <script>
@@ -157,7 +158,7 @@ var audioStarted = false;
 
 window.addEventListener('keydown', function(e){
   if (PREVENT_CODES.has(e.code)) e.preventDefault();
-  if (!audioStarted) { audioStarted = true; ensureAudio(); }
+  if (!audioStarted) { audioStarted = true; ensureAudio(); startMusic(); }
   if (!heldKeys.has(e.code)) pressedKeys.add(e.code);
   heldKeys.add(e.code);
 }, {passive:false});
@@ -169,7 +170,7 @@ window.addEventListener('keyup', function(e){
 window.addEventListener('blur', function(){ heldKeys.clear(); });
 
 /* ============================================================
-   AUDIO (tiny synthesized beeps, no external files)
+   AUDIO (tiny synthesized beeps + procedural chiptune score, no external files)
    ============================================================ */
 var audioCtx = null;
 var muted = false;
@@ -177,6 +178,9 @@ function ensureAudio(){
   if (audioCtx) return;
   try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
   catch(e){ audioCtx = null; }
+  if (audioCtx && audioCtx.state === 'suspended'){
+    try { audioCtx.resume(); } catch(e){}
+  }
 }
 function beep(freq, dur, type, vol){
   if (muted || !audioCtx) return;
@@ -200,10 +204,96 @@ var SND = {
   block: function(){ beep(420, 0.06, 'triangle', 0.07); },
   jump:  function(){ beep(520, 0.08, 'sine', 0.06); },
   special: function(){ beep(300, 0.20, 'sawtooth', 0.08); },
+  super: function(){
+    beep(220, 0.09, 'sawtooth', 0.10);
+    setTimeout(function(){ beep(330, 0.09, 'sawtooth', 0.10); }, 70);
+    setTimeout(function(){ beep(550, 0.22, 'sawtooth', 0.13); }, 140);
+  },
   ko: function(){ beep(200,0.15,'square',0.09); setTimeout(function(){beep(120,0.25,'square',0.09);},120); },
   start: function(){ beep(660, 0.10, 'square', 0.08); },
   menu: function(){ beep(500, 0.06, 'square', 0.05); }
 };
+
+/* ---------- procedural background score (original riff, driving arcade-fight-theme style) ---------- */
+var MUSIC_BPM = 132;
+var MUSIC_STEP_DUR = 60 / MUSIC_BPM / 4;
+var MUSIC_PATTERN_LEN = 16;
+// low driving bassline (E minor) - syncopated, evokes tense arena combat music
+var BASS_NOTES = [82.41,0,82.41,0, 98.00,0,82.41,0, 110.00,0,82.41,0, 98.00,0,73.42,0];
+// off-beat synth-brass stabs for the syncopated "hit" accents
+var STAB_NOTES = [0,0,0,329.63, 0,0,0,293.66, 0,0,0,329.63, 0,392.00,0,349.23];
+var musicGain = null, musicStarted = false, musicNextTime = 0, musicStep = 0, musicIntervalId = null, noiseBuffer = null;
+
+function makeNoiseBuffer(){
+  var buf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate*0.2), audioCtx.sampleRate);
+  var data = buf.getChannelData(0);
+  for (var i=0;i<data.length;i++) data[i] = Math.random()*2-1;
+  return buf;
+}
+function playTone(freq, time, dur, type, vol, dest){
+  var osc = audioCtx.createOscillator();
+  var gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, time);
+  gain.gain.setValueAtTime(0, time);
+  gain.gain.linearRampToValueAtTime(vol, time+0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time+dur);
+  osc.connect(gain); gain.connect(dest);
+  osc.start(time); osc.stop(time+dur+0.02);
+}
+function playKick(time){
+  var osc = audioCtx.createOscillator();
+  var gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, time);
+  osc.frequency.exponentialRampToValueAtTime(42, time+0.12);
+  gain.gain.setValueAtTime(0.24, time);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time+0.16);
+  osc.connect(gain); gain.connect(musicGain);
+  osc.start(time); osc.stop(time+0.17);
+}
+function playHat(time, vol){
+  var src = audioCtx.createBufferSource();
+  src.buffer = noiseBuffer;
+  var filter = audioCtx.createBiquadFilter();
+  filter.type = 'highpass'; filter.frequency.value = 6000;
+  var gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time+0.05);
+  src.connect(filter); filter.connect(gain); gain.connect(musicGain);
+  src.start(time); src.stop(time+0.06);
+}
+function musicScheduleStep(step, time){
+  var bassFreq = BASS_NOTES[step];
+  if (bassFreq) playTone(bassFreq, time, MUSIC_STEP_DUR*1.1, 'sawtooth', 0.10, musicGain);
+  var stabFreq = STAB_NOTES[step];
+  if (stabFreq) playTone(stabFreq, time, MUSIC_STEP_DUR*0.5, 'square', 0.07, musicGain);
+  if (step % 4 === 0) playKick(time);
+  if (step % 4 === 2) playHat(time, 0.05);
+  else if (step % 2 === 1) playHat(time, 0.025);
+}
+function musicSchedulerTick(){
+  if (!audioCtx) return;
+  while (musicNextTime < audioCtx.currentTime + 0.12){
+    musicScheduleStep(musicStep, musicNextTime);
+    musicNextTime += MUSIC_STEP_DUR;
+    musicStep = (musicStep + 1) % MUSIC_PATTERN_LEN;
+  }
+}
+function startMusic(){
+  if (!audioCtx || musicStarted) return;
+  musicStarted = true;
+  musicGain = audioCtx.createGain();
+  musicGain.gain.value = muted ? 0 : 0.45;
+  musicGain.connect(audioCtx.destination);
+  noiseBuffer = makeNoiseBuffer();
+  musicNextTime = audioCtx.currentTime + 0.1;
+  musicStep = 0;
+  musicIntervalId = setInterval(musicSchedulerTick, 25);
+}
+function setMusicMuted(m){
+  if (musicGain) musicGain.gain.value = m ? 0 : 0.45;
+}
 
 /* ============================================================
    PIXEL TEXT RENDERER (offscreen render + alpha threshold => crisp blocky text)
@@ -429,8 +519,12 @@ function addShake(mag, time){ shakeMag = Math.max(shakeMag, mag); shakeTimer = M
 var ATK = {
   punch:   {startup:5, active:5, total:18, damage:6,  nearX:8,  width:15, yTop:46, yBot:28, push:2.0, kbSelf:0, heavy:false, sound:'punch'},
   kick:    {startup:9, active:6, total:28, damage:11, nearX:6,  width:22, yTop:34, yBot:6,  push:3.4, kbSelf:0, heavy:true,  sound:'kick'},
-  special: {startup:12,active:1, total:30, damage:15, nearX:18, width:10, yTop:40, yBot:26, push:2.0, kbSelf:0, heavy:true,  sound:'special'}
+  special: {startup:12,active:1, total:30, damage:15, nearX:18, width:10, yTop:40, yBot:26, push:2.0, kbSelf:0, heavy:true,  sound:'special'},
+  super:   {startup:16,active:12,total:48, damage:26, nearX:2,  width:42, yTop:54, yBot:2,  push:5.5, kbSelf:0, heavy:true,  sound:'super', unblockable:true}
 };
+var SUPER_METER_MAX = 100;
+var superBanner = { text:'', color:'#fff', timer:0 };
+var hitStopTimer = 0;
 
 function makeFighter(name, colors, x, facing, isPlayer){
   return {
@@ -453,6 +547,7 @@ function makeFighter(name, colors, x, facing, isPlayer){
     flashTimer: 0,
     blockFlashTimer: 0,
     specialCooldown: 0,
+    superMeter: 0,
     animTimer: 0,
     koRotation: 0,
     aiTimer: 0,
@@ -479,7 +574,7 @@ function resetFighter(f, x, facing){
   f.state = 'idle'; f.attackElapsed = 0; f.attackDef = null; f.hitApplied = false;
   f.health = f.maxHealth;
   f.stunTimer = 0; f.flashTimer = 0; f.blockFlashTimer = 0;
-  f.specialCooldown = 0; f.koRotation = 0;
+  f.specialCooldown = 0; f.superMeter = 0; f.koRotation = 0;
   f.aiTimer = 0;
 }
 
@@ -494,12 +589,13 @@ function getPlayerInput(){
     jump: pressedKeys.has('ArrowUp'),
     punch: pressedKeys.has('KeyZ'),
     kick: pressedKeys.has('KeyX'),
-    special: pressedKeys.has('KeyC')
+    special: pressedKeys.has('KeyC'),
+    superMove: pressedKeys.has('KeyV')
   };
 }
 
 function getAIInput(cpuF, target){
-  var input = {left:false,right:false,down:false,jump:false,punch:false,kick:false,special:false};
+  var input = {left:false,right:false,down:false,jump:false,punch:false,kick:false,special:false,superMove:false};
   var dx = target.x - cpuF.x;
   var dist = Math.abs(dx);
   var busy = (cpuF.state==='punch'||cpuF.state==='kick'||cpuF.state==='special'||cpuF.state==='hit'||cpuF.state==='ko');
@@ -535,10 +631,14 @@ function getAIInput(cpuF, target){
     cpuF.aiIntent = 'approach';
   } else if (cpuF.aiIntent === 'attack'){
     if (dist < 40){
-      var r = Math.random();
-      if (r < 0.4) input.punch = true;
-      else if (r < 0.75) input.kick = true;
-      else if (cpuF.specialCooldown<=0) input.special = true;
+      if (cpuF.superMeter >= SUPER_METER_MAX && Math.random()<0.8){
+        input.superMove = true;
+      } else {
+        var r = Math.random();
+        if (r < 0.4) input.punch = true;
+        else if (r < 0.75) input.kick = true;
+        else if (cpuF.specialCooldown<=0) input.special = true;
+      }
       cpuF.aiIntent = 'approach';
     } else {
       if (dx > 0) input.right = true; else input.left = true;
@@ -558,6 +658,13 @@ function startAttack(f, type){
   f.attackElapsed = 0;
   f.hitApplied = false;
   if (type==='special') f.specialCooldown = 95;
+  if (type==='super'){
+    f.superMeter = 0;
+    superBanner.text = f.name + "'S RAGE STRIKE!";
+    superBanner.color = f===player ? '#ff6a1e' : '#5fd0ff';
+    superBanner.timer = 55;
+    addShake(3,14);
+  }
   SND[type] && SND[type]();
 }
 
@@ -568,7 +675,7 @@ function updateFighter(f, input, opp, dt){
   if (f.specialCooldown>0) f.specialCooldown -= dt;
 
   // auto-face opponent unless mid-attack/hit
-  if (f.state!=='punch' && f.state!=='kick' && f.state!=='special' && f.state!=='hit'){
+  if (f.state!=='punch' && f.state!=='kick' && f.state!=='special' && f.state!=='super' && f.state!=='hit'){
     f.facing = (opp.x > f.x) ? 1 : -1;
   }
 
@@ -578,9 +685,12 @@ function updateFighter(f, input, opp, dt){
     if (f.stunTimer<=0) f.state='idle';
   } else if (f.state==='ko'){
     // frozen, handled by round manager
-  } else if (f.state==='punch' || f.state==='kick' || f.state==='special'){
+  } else if (f.state==='punch' || f.state==='kick' || f.state==='special' || f.state==='super'){
     f.attackElapsed += dt;
     var def = f.attackDef;
+    if (f.state==='super' && f.attackElapsed >= def.startup && f.attackElapsed < def.startup+def.active && Math.random()<0.5){
+      spawnSpark(f.x+f.facing*14, feetY(f)-34, f===player?'#ffb45a':'#8fe3ff', 2, 2.5);
+    }
     if (!f.hitApplied && f.attackElapsed >= def.startup && f.attackElapsed < def.startup+def.active){
       if (f.state==='special'){
         spawnProjectile(f, def);
@@ -611,8 +721,9 @@ function updateFighter(f, input, opp, dt){
       f.state = f.onGround ? (moving ? 'walk' : 'idle') : 'jump';
     }
 
-    if (f.onGround && (input.punch || input.kick || input.special)){
-      if (input.punch) startAttack(f,'punch');
+    if (f.onGround && (input.punch || input.kick || input.special || input.superMove)){
+      if (input.superMove && f.superMeter>=SUPER_METER_MAX) startAttack(f,'super');
+      else if (input.punch) startAttack(f,'punch');
       else if (input.kick) startAttack(f,'kick');
       else if (input.special && f.specialCooldown<=0) startAttack(f,'special');
     }
@@ -670,7 +781,7 @@ function tryMeleeHit(attacker, defender, def){
 }
 
 function applyHit(attacker, defender, def){
-  var blocked = (defender.state==='crouch') && defender.onGround;
+  var blocked = !def.unblockable && (defender.state==='crouch') && defender.onGround;
   var dmg = def.damage;
   var hx = defender.x - attacker.facing*10;
   var hy = feetY(defender)-36;
@@ -685,10 +796,15 @@ function applyHit(attacker, defender, def){
     defender.stunTimer = def.heavy ? 22 : 13;
     defender.flashTimer = 6;
     defender.vx = -attacker.facing*def.push;
-    spawnSpark(hx,hy,'#ffe27a',9,4);
-    addShake(def.heavy?3:1.5, 8);
+    spawnSpark(hx,hy, def===ATK.super ? '#ffffff' : '#ffe27a', def===ATK.super?18:9, def===ATK.super?7:4);
+    addShake(def===ATK.super ? 6 : (def.heavy?3:1.5), def===ATK.super?18:8);
+    if (def===ATK.super) hitStopTimer = 9;
   }
   defender.health = Math.max(0, defender.health - dmg);
+  if (def !== ATK.super){
+    attacker.superMeter = Math.min(SUPER_METER_MAX, attacker.superMeter + (blocked?4:8));
+    defender.superMeter = Math.min(SUPER_METER_MAX, defender.superMeter + (blocked?2:5));
+  }
 }
 
 function spawnProjectile(f, def){
@@ -720,6 +836,8 @@ function updateProjectiles(dt, opp1, opp2){
         spawnSpark(p.x,p.y,'#8fd1ff',6,3);
         SND.block();
         target.health = Math.max(0, target.health - Math.round(p.damage*0.15));
+        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 4);
+        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 2);
       } else {
         target.state='hit';
         target.stunTimer=20;
@@ -728,6 +846,8 @@ function updateProjectiles(dt, opp1, opp2){
         target.health = Math.max(0, target.health - p.damage);
         spawnSpark(p.x,p.y,'#ffe27a',10,4);
         addShake(2.4,8);
+        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 8);
+        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 5);
       }
       projectiles.splice(i,1);
       continue;
@@ -788,9 +908,25 @@ function drawFighter(f){
   } else if (f.state==='special'){
     var sr = f.attackElapsed / f.attackDef.total;
     frontArmSwing = Math.min(1,sr*2.4)*9;
+  } else if (f.state==='super'){
+    var ur = f.attackElapsed / f.attackDef.total;
+    var uext = ur < 0.34 ? ur/0.34 : (ur<0.66 ? 1 : Math.max(0,1-(ur-0.66)/0.34));
+    frontArmSwing = uext*16;
+    legKickX = uext*9;
   } else if (f.state==='hit'){
     frontArmSwing = -4;
     backArmX -= 2;
+  }
+
+  // ===== super aura (drawn behind body) =====
+  if (f.state==='super'){
+    var auraR = 30 + Math.sin(f.animTimer*0.6)*4;
+    var auraColor = f===player ? 'rgba(255,120,30,0.30)' : 'rgba(90,210,255,0.30)';
+    var glow = ctx.createRadialGradient(0,torsoTop+2,2,0,torsoTop+2,auraR);
+    glow.addColorStop(0, auraColor);
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-auraR, torsoTop+2-auraR, auraR*2, auraR*2);
   }
 
   // ===== back leg =====
@@ -812,7 +948,7 @@ function drawFighter(f){
   ctx.fillRect(-8, torsoTop+bob, 16, 5);
 
   // ===== front leg =====
-  if (f.state==='kick'){
+  if (f.state==='kick' || f.state==='super'){
     drawLimb(frontLegX+legKickX, legTop+legKickY+bob, 7, legLen*0.6, fcolor(c.pants,f));
     ctx.fillStyle = fcolor(c.shoe,f);
     ctx.fillRect(frontLegX+legKickX, legTop+legKickY+bob-2, 10, 6);
@@ -942,6 +1078,23 @@ function drawHealthBar(f, side){
     ctx.moveTo(px+4,py); ctx.lineTo(px+8,py+4); ctx.lineTo(px+4,py+8); ctx.lineTo(px,py+4);
     ctx.closePath(); ctx.fill();
   }
+
+  // super meter
+  var smW = barW, smH = 5, smY = y+barH+16;
+  ctx.fillStyle = PAL.barBack;
+  ctx.fillRect(x-2,smY-1,smW+4,smH+2);
+  var smPct = f.superMeter / SUPER_METER_MAX;
+  var full = smPct >= 1;
+  var smFillW = Math.round(smW*smPct);
+  ctx.fillStyle = full ? (Math.floor(frameCount/8)%2===0 ? '#fff4c2' : '#ffcf3f') : '#a55fd6';
+  if (side==='left') ctx.fillRect(x,smY,smFillW,smH);
+  else ctx.fillRect(x+smW-smFillW,smY,smFillW,smH);
+  ctx.strokeStyle = full ? '#ffe27a' : 'rgba(232,220,176,0.5)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x-2+0.5,smY-1+0.5,smW+3,smH+1);
+  if (full){
+    drawPixelText('SUPER READY', side==='left'?x:x+barW, smY+7, 6, '#ffe27a', side==='left'?'left':'right');
+  }
 }
 function drawTimer(){
   var s = Math.max(0, Math.ceil(roundTimeLeft));
@@ -1003,7 +1156,7 @@ function timeUpCheck(){
 }
 
 function update(dt){
-  if (pressedKeys.has('KeyM')) muted = !muted;
+  if (pressedKeys.has('KeyM')){ muted = !muted; setMusicMuted(muted); }
 
   if (gameState === STATE.MENU){
     if (pressedKeys.has('Enter')) beginMatch();
@@ -1015,7 +1168,9 @@ function update(dt){
   }
   else if (gameState === STATE.FIGHT){
     if (pressedKeys.has('KeyP')){ prevStateBeforePause = STATE.FIGHT; gameState = STATE.PAUSED; }
-    else {
+    else if (hitStopTimer > 0){
+      hitStopTimer -= dt;
+    } else {
       var pInput = getPlayerInput();
       var cInput = getAIInput(cpu, player);
       updateFighter(player, pInput, cpu, dt);
@@ -1050,6 +1205,7 @@ function update(dt){
 
   updateParticles(dt);
   if (shakeTimer>0){ shakeTimer -= dt; if (shakeTimer<=0) shakeMag=0; }
+  if (superBanner.timer>0) superBanner.timer -= dt;
 
   pressedKeys.clear();
 }
@@ -1083,6 +1239,15 @@ function render(){
     drawPixelTextShadow('ROUND '+roundNumber, W/2, 26, 8, '#c9b8e0', 'center');
   }
 
+  if (superBanner.timer>0 && gameState===STATE.FIGHT){
+    var bw = 260, bh = 16, by = 96;
+    ctx.globalAlpha = Math.min(1, superBanner.timer/12);
+    ctx.fillStyle = 'rgba(10,6,18,0.75)';
+    ctx.fillRect(W/2-bw/2, by-3, bw, bh);
+    ctx.globalAlpha = 1;
+    drawPixelTextShadow(superBanner.text, W/2, by, 12, superBanner.color, 'center');
+  }
+
   if (gameState===STATE.MENU) drawMenu();
   else if (gameState===STATE.ROUND_INTRO) drawIntroOverlay();
   else if (gameState===STATE.ROUND_END) drawEndOverlay();
@@ -1112,7 +1277,7 @@ function drawMenu(){
 
   drawPixelText('ARROWS - MOVE / JUMP / BLOCK', W/2, 226, 7, '#9a8fb0', 'center');
   drawPixelText('Z-PUNCH   X-KICK   C-SPECIAL', W/2, 238, 7, '#9a8fb0', 'center');
-  drawPixelText('P-PAUSE   M-SOUND', W/2, 250, 7, '#9a8fb0', 'center');
+  drawPixelText('V-SUPER (FILL METER)   P-PAUSE   M-SOUND', W/2, 250, 7, '#9a8fb0', 'center');
 }
 
 function drawIntroOverlay(){
