@@ -527,12 +527,15 @@ function addShake(mag, time){ shakeMag = Math.max(shakeMag, mag); shakeTimer = M
    FIGHTER
    ============================================================ */
 var ATK = {
-  punch:   {startup:5, active:5, total:18, damage:6,  nearX:8,  width:15, yTop:46, yBot:28, push:2.0, kbSelf:0, heavy:false, sound:'punch'},
-  kick:    {startup:9, active:6, total:28, damage:11, nearX:6,  width:22, yTop:34, yBot:6,  push:3.4, kbSelf:0, heavy:true,  sound:'kick'},
-  special: {startup:12,active:1, total:30, damage:15, nearX:18, width:10, yTop:40, yBot:26, push:2.0, kbSelf:0, heavy:true,  sound:'special'},
-  super:   {startup:16,active:12,total:48, damage:26, nearX:2,  width:42, yTop:54, yBot:2,  push:5.5, kbSelf:0, heavy:true,  sound:'super', unblockable:true}
+  punch:   {startup:5, active:5, total:18, damage:6,  nearX:9,  width:19, yTop:80, yBot:56, push:2.0, kbSelf:0, heavy:false, sound:'punch'},
+  kick:    {startup:9, active:6, total:28, damage:11, nearX:7,  width:34, yTop:83, yBot:30, push:3.4, kbSelf:0, heavy:true,  sound:'kick'},
+  special: {startup:12,active:1, total:30, damage:15, nearX:20, width:11, yTop:60, yBot:38, push:2.0, kbSelf:0, heavy:true,  sound:'special'},
+  super:   {startup:16,active:12,total:48, damage:26, nearX:3,  width:52, yTop:84, yBot:4,  push:5.5, kbSelf:0, heavy:true,  sound:'super', unblockable:true}
 };
 var SUPER_METER_MAX = 100;
+
+/* body proportions - tall & slender pixel silhouette */
+var BODY = { legLen:30, torsoH:32, headSize:16, torsoHalfW:6, legW:5, armW:4, shoeH:7, crouchAmt:18 };
 var KNOCKDOWN_TOTAL = 70;
 var KNOCKDOWN_RISE_START = 18;
 var superBanner = { text:'', color:'#fff', timer:0 };
@@ -563,6 +566,7 @@ function makeFighter(name, colors, x, facing, isPlayer){
     blockFlashTimer: 0,
     specialCooldown: 0,
     superMeter: 0,
+    crouchAmount: 0,
     animTimer: 0,
     koRotation: 0,
     aiTimer: 0,
@@ -589,7 +593,7 @@ function resetFighter(f, x, facing){
   f.state = 'idle'; f.attackElapsed = 0; f.attackDef = null; f.hitApplied = false;
   f.health = f.maxHealth;
   f.stunTimer = 0; f.knockdownTimer = 0; f.flashTimer = 0; f.blockFlashTimer = 0;
-  f.specialCooldown = 0; f.superMeter = 0; f.koRotation = 0;
+  f.specialCooldown = 0; f.superMeter = 0; f.crouchAmount = 0; f.koRotation = 0;
   f.aiTimer = 0;
 }
 
@@ -683,10 +687,17 @@ function startAttack(f, type){
   SND[type] && SND[type]();
 }
 
+function smoothstep(t){
+  t = t<0 ? 0 : (t>1 ? 1 : t);
+  return t*t*(3-2*t);
+}
+
 function updateFighter(f, input, opp, dt){
   f.animTimer += dt;
   if (f.flashTimer>0) f.flashTimer -= dt;
   if (f.blockFlashTimer>0) f.blockFlashTimer -= dt;
+  var crouchTarget = (f.state==='crouch') ? 1 : 0;
+  f.crouchAmount += (crouchTarget - f.crouchAmount) * Math.min(1, 0.3*dt);
   if (f.specialCooldown>0) f.specialCooldown -= dt;
 
   // auto-face opponent unless mid-attack/hit/down
@@ -707,7 +718,7 @@ function updateFighter(f, input, opp, dt){
     f.attackElapsed += dt;
     var def = f.attackDef;
     if (f.state==='super' && f.attackElapsed >= def.startup && f.attackElapsed < def.startup+def.active && Math.random()<0.5){
-      spawnSpark(f.x+f.facing*14, feetY(f)-34, f===player?'#ffb45a':'#8fe3ff', 2, 2.5);
+      spawnSpark(f.x+f.facing*20, feetY(f)-58, f===player?'#ffb45a':'#8fe3ff', 2, 2.5);
     }
     if (!f.hitApplied && f.attackElapsed >= def.startup && f.attackElapsed < def.startup+def.active){
       if (f.state==='special'){
@@ -781,9 +792,9 @@ function separateFighters(a,b){
 }
 
 function hurtRect(f){
-  var h = f.state==='crouch' ? 40 : 62;
+  var h = f.state==='crouch' ? 64 : 88;
   var fy = feetY(f);
-  return { left:f.x-11, right:f.x+11, top:fy-h, bottom:fy };
+  return { left:f.x-9, right:f.x+9, top:fy-h, bottom:fy };
 }
 
 function tryMeleeHit(attacker, defender, def){
@@ -806,7 +817,7 @@ function applyHit(attacker, defender, def){
   var blocked = !def.unblockable && (defender.state==='crouch') && defender.onGround;
   var dmg = def.damage;
   var hx = defender.x - attacker.facing*10;
-  var hy = feetY(defender)-36;
+  var hy = feetY(defender) - (def.yTop+def.yBot)/2;
   var isSuper = (def===ATK.super);
   if (blocked){
     dmg = Math.round(dmg*0.2);
@@ -838,16 +849,16 @@ function applyHit(attacker, defender, def){
     }
   }
   if (!isSuper){
-    attacker.superMeter = Math.min(SUPER_METER_MAX, attacker.superMeter + (blocked?4:8));
-    defender.superMeter = Math.min(SUPER_METER_MAX, defender.superMeter + (blocked?2:5));
+    attacker.superMeter = Math.min(SUPER_METER_MAX, attacker.superMeter + (blocked?12:24));
+    defender.superMeter = Math.min(SUPER_METER_MAX, defender.superMeter + (blocked?6:15));
   }
 }
 
 function spawnProjectile(f, def){
   projectiles.push({
     owner: f,
-    x: f.x + f.facing*18,
-    y: feetY(f)-34,
+    x: f.x + f.facing*20,
+    y: feetY(f) - (def.yTop+def.yBot)/2,
     vx: f.facing*3.4,
     w: 10, h: 8,
     damage: def.damage,
@@ -873,8 +884,8 @@ function updateProjectiles(dt, opp1, opp2){
         spawnSpark(p.x,p.y,'#8fd1ff',6,3);
         SND.block();
         target.health = Math.max(0, target.health - Math.round(p.damage*0.15));
-        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 4);
-        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 2);
+        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 12);
+        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 6);
       } else {
         target.state='hit';
         target.stunTimer=20;
@@ -883,8 +894,8 @@ function updateProjectiles(dt, opp1, opp2){
         target.health = Math.max(0, target.health - p.damage);
         spawnSpark(p.x,p.y,'#ffe27a',10,4);
         addShake(2.4,8);
-        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 8);
-        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 5);
+        p.owner.superMeter = Math.min(SUPER_METER_MAX, p.owner.superMeter + 24);
+        target.superMeter = Math.min(SUPER_METER_MAX, target.superMeter + 15);
       }
       projectiles.splice(i,1);
       continue;
@@ -907,57 +918,59 @@ function drawFighter(f){
   ctx.scale(f.facing, 1);
 
   var c = f.colors;
-  var bob = (f.state==='idle') ? Math.sin(f.animTimer*0.09)*1.2 : 0;
+  var bob = (f.state==='idle') ? Math.sin(f.animTimer*0.09)*1.4 : 0;
   var walkCycle = Math.sin(f.animTimer*0.45);
 
   if (f.state==='ko' || (f.state==='knockdown' && f.knockdownTimer > KNOCKDOWN_RISE_START)){ drawKO(f,c); ctx.restore(); return; }
 
-  var crouch = (f.state==='crouch') ? 12 : 0;
-  var legLen = 20 - crouch*0.3;
-  var torsoH = 22;
-  var headSize = 12;
+  var crouch = BODY.crouchAmt * f.crouchAmount;
+  var legLen = BODY.legLen - crouch*0.3;
+  var torsoH = BODY.torsoH;
+  var headSize = BODY.headSize;
+  var tw = BODY.torsoHalfW;
 
   var legTop = -legLen;
   var torsoTop = legTop - torsoH + crouch*0.5;
   var headBottom = torsoTop;
   var headTop = headBottom - headSize;
-  var shoulderY = torsoTop + 4;
+  var shoulderY = torsoTop + 6;
 
-  var frontLegX = 3, backLegX = -5;
-  var frontArmX = 5, backArmX = -6;
+  var frontLegX = 3, backLegX = -4;
+  var backArmX = -5;
 
   if (f.state==='walk'){
-    frontLegX = 3 + walkCycle*5;
-    backLegX = -5 - walkCycle*5;
+    frontLegX = 3 + walkCycle*7;
+    backLegX = -4 - walkCycle*7;
   }
 
-  var frontArmSwing = 0, frontArmLift = 0, legKickX = 0, legKickY = 0;
+  var frontArmSwing = 0, armRaiseY = 0, legKickX = 0, legKickY = 0;
 
   if (f.state==='punch'){
     var pr = f.attackElapsed / f.attackDef.total;
-    var ext = pr < 0.35 ? pr/0.35 : (pr<0.6 ? 1 : Math.max(0,1-(pr-0.6)/0.4));
-    frontArmSwing = ext*11;
+    var ext = smoothstep(pr < 0.35 ? pr/0.35 : (pr<0.6 ? 1 : Math.max(0,1-(pr-0.6)/0.4)));
+    frontArmSwing = ext*15;
+    armRaiseY = -ext*16;
   } else if (f.state==='kick'){
     var kr = f.attackElapsed / f.attackDef.total;
-    var kext = kr < 0.4 ? kr/0.4 : (kr<0.65?1:Math.max(0,1-(kr-0.65)/0.35));
-    legKickX = kext*16;
-    legKickY = -kext*8;
+    var kext = smoothstep(kr < 0.4 ? kr/0.4 : (kr<0.65?1:Math.max(0,1-(kr-0.65)/0.35)));
+    legKickX = kext*30;
+    legKickY = -kext*40;
   } else if (f.state==='special'){
     var sr = f.attackElapsed / f.attackDef.total;
-    frontArmSwing = Math.min(1,sr*2.4)*9;
+    frontArmSwing = smoothstep(Math.min(1,sr*2.4))*13;
   } else if (f.state==='super'){
     var ur = f.attackElapsed / f.attackDef.total;
-    var uext = ur < 0.34 ? ur/0.34 : (ur<0.66 ? 1 : Math.max(0,1-(ur-0.66)/0.34));
-    frontArmSwing = uext*16;
-    legKickX = uext*9;
+    var uext = smoothstep(ur < 0.34 ? ur/0.34 : (ur<0.66 ? 1 : Math.max(0,1-(ur-0.66)/0.34)));
+    frontArmSwing = uext*23;
+    legKickX = uext*13;
   } else if (f.state==='hit' || f.state==='finishFall' || f.state==='knockdown'){
-    frontArmSwing = -4;
-    backArmX -= 2;
+    frontArmSwing = -6;
+    backArmX -= 3;
   }
 
   // ===== super aura (drawn behind body) =====
   if (f.state==='super'){
-    var auraR = 30 + Math.sin(f.animTimer*0.6)*4;
+    var auraR = 42 + Math.sin(f.animTimer*0.6)*5;
     var auraColor = f===player ? 'rgba(255,120,30,0.30)' : 'rgba(90,210,255,0.30)';
     var glow = ctx.createRadialGradient(0,torsoTop+2,2,0,torsoTop+2,auraR);
     glow.addColorStop(0, auraColor);
@@ -967,55 +980,64 @@ function drawFighter(f){
   }
 
   // ===== back leg =====
-  drawLimb(backLegX, legTop+bob, 6, legLen, fcolor(c.pants,f));
-  drawLimb(backLegX, legTop+legLen-6+bob, 6, 6, fcolor(c.shoe,f));
+  drawLimb(backLegX, legTop+bob, BODY.legW, legLen, fcolor(c.pants,f));
+  drawLimb(backLegX, legTop+legLen-BODY.shoeH+bob, BODY.legW, BODY.shoeH, fcolor(c.shoe,f));
 
   // ===== back arm =====
   ctx.fillStyle = fcolor(c.skin,f);
-  ctx.fillRect(backArmX-2, shoulderY+bob, 5, 15);
+  ctx.fillRect(backArmX-BODY.armW/2, shoulderY+bob, BODY.armW, 21);
 
   // ===== torso =====
   ctx.fillStyle = fcolor(c.pants, f);
-  ctx.fillRect(-8, legTop-4+bob, 16, 6);
+  ctx.fillRect(-tw, legTop-6+bob, tw*2, 8);
   ctx.fillStyle = fcolor(c.belt, f);
-  ctx.fillRect(-8, legTop-5+bob, 16, 3);
+  ctx.fillRect(-tw, legTop-7+bob, tw*2, 3);
   ctx.fillStyle = fcolor(c.skin, f);
-  ctx.fillRect(-8, torsoTop+bob, 16, torsoH-4);
+  ctx.fillRect(-tw, torsoTop+bob, tw*2, torsoH-6);
   ctx.fillStyle = fcolor(c.bandDark, f);
-  ctx.fillRect(-8, torsoTop+bob, 16, 5);
+  ctx.fillRect(-tw, torsoTop+bob, tw*2, 7);
 
-  // ===== front leg =====
-  if (f.state==='kick' || f.state==='super'){
-    drawLimb(frontLegX+legKickX, legTop+legKickY+bob, 7, legLen*0.6, fcolor(c.pants,f));
-    ctx.fillStyle = fcolor(c.shoe,f);
-    ctx.fillRect(frontLegX+legKickX, legTop+legKickY+bob-2, 10, 6);
-  } else {
-    drawLimb(frontLegX, legTop+bob, 6, legLen, fcolor(c.pants,f));
-    drawLimb(frontLegX, legTop+legLen-6+bob, 6, 6, fcolor(c.shoe,f));
+  // ===== front leg (grounded stance only - a raised kick draws later, on top of the head) =====
+  var kicking = (f.state==='kick' || f.state==='super');
+  if (!kicking){
+    drawLimb(frontLegX, legTop+bob, BODY.legW, legLen, fcolor(c.pants,f));
+    drawLimb(frontLegX, legTop+legLen-BODY.shoeH+bob, BODY.legW, BODY.shoeH, fcolor(c.shoe,f));
   }
 
   // ===== head =====
   ctx.fillStyle = fcolor(c.hair, f);
-  ctx.fillRect(-6, headTop+bob, headSize, headSize);
+  ctx.fillRect(-headSize/2, headTop+bob, headSize, headSize);
   ctx.fillStyle = fcolor(c.skin, f);
-  ctx.fillRect(-6, headTop+5+bob, headSize, headSize-5);
+  ctx.fillRect(-headSize/2, headTop+6+bob, headSize, headSize-6);
   ctx.fillStyle = fcolor(c.band, f);
-  ctx.fillRect(-6, headTop+3+bob, headSize, 3);
+  ctx.fillRect(-headSize/2, headTop+4+bob, headSize, 4);
   // eye
   ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(2, headTop+7+bob, 2, 2);
+  ctx.fillRect(3, headTop+9+bob, 3, 3);
 
-  // ===== front arm (drawn last, over torso) =====
+  // ===== front arm (drawn over torso) =====
   ctx.fillStyle = fcolor(c.skin, f);
-  ctx.fillRect(3+frontArmSwing, shoulderY+bob, 5+frontArmSwing*0.3, 14);
+  ctx.fillRect(3+frontArmSwing, shoulderY+armRaiseY+bob, BODY.armW+frontArmSwing*0.25, 20);
   ctx.fillStyle = fcolor(c.trim, f);
-  ctx.fillRect(3+frontArmSwing, shoulderY+10+bob, 5+frontArmSwing*0.3, 3);
+  ctx.fillRect(3+frontArmSwing, shoulderY+armRaiseY+15+bob, BODY.armW+frontArmSwing*0.25, 4);
+
+  // ===== kicking leg: bent thigh+shin so a high kick stays visually joined to the hip =====
+  if (kicking){
+    var kneeX = frontLegX + legKickX*0.5;
+    var kneeY = legTop + legKickY*0.5;
+    var footX = frontLegX + legKickX;
+    var footY = legTop + legKickY;
+    drawLimb(kneeX, kneeY+bob, BODY.legW+1, (legTop-kneeY), fcolor(c.pants,f));
+    drawLimb(footX, footY+bob, BODY.legW, (kneeY-footY), fcolor(c.pants,f));
+    ctx.fillStyle = fcolor(c.shoe,f);
+    ctx.fillRect(footX-4, footY+bob-2, BODY.legW+5, BODY.shoeH);
+  }
 
   // block flash shield
   if (f.blockFlashTimer>0){
     ctx.globalAlpha = f.blockFlashTimer/8*0.6;
     ctx.fillStyle = '#8fd1ff';
-    ctx.fillRect(-14, torsoTop-6, 28, 34);
+    ctx.fillRect(-20, torsoTop-8, 40, 48);
     ctx.globalAlpha = 1;
   }
 
@@ -1028,42 +1050,43 @@ function drawLimb(x,y,w,h,color){
 function drawKO(f,c){
   // lying flat along x-axis, feet-origin already translated
   ctx.fillStyle = fcolor(c.pants,f);
-  ctx.fillRect(-26, -10, 22, 8);
+  ctx.fillRect(-37, -13, 31, 10);
   ctx.fillStyle = fcolor(c.skin,f);
-  ctx.fillRect(-6, -12, 20, 10);
+  ctx.fillRect(-8, -16, 28, 13);
   ctx.fillStyle = fcolor(c.hair,f);
-  ctx.fillRect(14, -13, 12, 12);
+  ctx.fillRect(20, -18, 17, 17);
   ctx.fillStyle = fcolor(c.band,f);
-  ctx.fillRect(14, -13, 12, 3);
+  ctx.fillRect(20, -18, 17, 4);
 }
 function drawWinPose(f,c,x,y,facing){
   ctx.save();
   ctx.translate(x,y);
   ctx.scale(facing,1);
-  var legLen=20, torsoH=22, headSize=12;
+  var legLen=BODY.legLen, torsoH=BODY.torsoH, headSize=BODY.headSize, tw=BODY.torsoHalfW;
   var legTop=-legLen, torsoTop=legTop-torsoH, headTop=torsoTop-headSize;
-  drawLimb(-5, legTop, 6, legLen, c.pants);
-  drawLimb(-5, legTop+legLen-6, 6, 6, c.shoe);
-  drawLimb(4, legTop, 6, legLen, c.pants);
-  drawLimb(4, legTop+legLen-6, 6, 6, c.shoe);
+  drawLimb(-4, legTop, BODY.legW, legLen, c.pants);
+  drawLimb(-4, legTop+legLen-BODY.shoeH, BODY.legW, BODY.shoeH, c.shoe);
+  drawLimb(3, legTop, BODY.legW, legLen, c.pants);
+  drawLimb(3, legTop+legLen-BODY.shoeH, BODY.legW, BODY.shoeH, c.shoe);
   ctx.fillStyle = c.skin;
-  ctx.fillRect(-8, torsoTop, 16, torsoH-4);
+  ctx.fillRect(-tw, torsoTop, tw*2, torsoH-6);
   ctx.fillStyle = c.bandDark;
-  ctx.fillRect(-8, torsoTop, 16, 5);
+  ctx.fillRect(-tw, torsoTop, tw*2, 7);
   ctx.fillStyle = c.pants;
-  ctx.fillRect(-8, legTop-4, 16, 6);
+  ctx.fillRect(-tw, legTop-6, tw*2, 8);
+  var armTopY = torsoTop - 20;
   ctx.fillStyle = c.skin;
-  ctx.fillRect(-15, torsoTop-22, 5, 20);
-  ctx.fillRect(10, torsoTop-22, 5, 20);
+  ctx.fillRect(-13, armTopY, BODY.armW, 26);
+  ctx.fillRect(9, armTopY, BODY.armW, 26);
   ctx.fillStyle = c.trim;
-  ctx.fillRect(-15, torsoTop-22, 5, 4);
-  ctx.fillRect(10, torsoTop-22, 5, 4);
+  ctx.fillRect(-13, armTopY, BODY.armW, 5);
+  ctx.fillRect(9, armTopY, BODY.armW, 5);
   ctx.fillStyle = c.hair;
-  ctx.fillRect(-6, headTop, 12, 12);
+  ctx.fillRect(-headSize/2, headTop, headSize, headSize);
   ctx.fillStyle = c.skin;
-  ctx.fillRect(-6, headTop+5, 12, 7);
+  ctx.fillRect(-headSize/2, headTop+6, headSize, headSize-6);
   ctx.fillStyle = c.band;
-  ctx.fillRect(-6, headTop+3, 12, 3);
+  ctx.fillRect(-headSize/2, headTop+4, headSize, 4);
   ctx.restore();
 }
 
@@ -1366,18 +1389,18 @@ function dimScreen(alpha){
 
 function drawMenu(){
   dimScreen(0.55);
-  drawPixelTextShadow('PIXEL WARRIORS', W/2, 58, 26, '#ffcf3f', 'center');
-  drawPixelTextShadow('TEMPLE OF FLAME', W/2, 92, 11, '#c9b8e0', 'center');
+  drawPixelTextShadow('PIXEL WARRIORS', W/2, 48, 24, '#ffcf3f', 'center');
+  drawPixelTextShadow('TEMPLE OF FLAME', W/2, 78, 10, '#c9b8e0', 'center');
 
   var blink = Math.floor(frameCount/24)%2===0;
-  if (blink) drawPixelTextShadow('PRESS ENTER TO START', W/2, 122, 11, '#ffffff', 'center');
+  if (blink) drawPixelTextShadow('PRESS ENTER TO START', W/2, 100, 10, '#ffffff', 'center');
 
-  drawWinPose(player, player.colors, W/2-80, GROUND_Y-2, 1);
-  drawWinPose(cpu, cpu.colors, W/2+80, GROUND_Y-2, -1);
+  drawWinPose(player, player.colors, W/2-84, GROUND_Y+8, 1);
+  drawWinPose(cpu, cpu.colors, W/2+84, GROUND_Y+8, -1);
 
-  drawPixelText('ARROWS - MOVE / JUMP / BLOCK', W/2, 226, 7, '#9a8fb0', 'center');
-  drawPixelText('Z-PUNCH   X-KICK   C-SPECIAL', W/2, 238, 7, '#9a8fb0', 'center');
-  drawPixelText('V-SUPER (FILL METER)   P-PAUSE   M-SOUND', W/2, 250, 7, '#9a8fb0', 'center');
+  drawPixelText('ARROWS - MOVE / JUMP / BLOCK', W/2, 240, 7, '#9a8fb0', 'center');
+  drawPixelText('Z-PUNCH   X-KICK   C-SPECIAL', W/2, 252, 7, '#9a8fb0', 'center');
+  drawPixelText('V-SUPER (FILL METER)   P-PAUSE   M-SOUND', W/2, 264, 7, '#9a8fb0', 'center');
 }
 
 function drawIntroOverlay(){
@@ -1411,7 +1434,7 @@ function drawMatchEndOverlay(){
   drawPixelTextShadow(matchWinner.name+' WINS!', W/2, 60, 20, '#ffcf3f', 'center');
   drawPixelTextShadow('THE CHAMPION', W/2, 90, 11, '#c9b8e0', 'center');
   var blink = Math.floor(frameCount/24)%2===0;
-  if (blink) drawPixelTextShadow('PRESS ENTER', W/2, 190, 11, '#ffffff', 'center');
+  if (blink) drawPixelTextShadow('PRESS ENTER', W/2, 232, 11, '#ffffff', 'center');
 }
 function drawPausedOverlay(){
   dimScreen(0.55);
